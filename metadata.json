@@ -1,0 +1,7 @@
+{
+  "name": "Antipodes Area Explorer",
+  "description": "Find the exact geographic opposite of any point or area on Earth with a fun mole animation and interactive map selection.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
