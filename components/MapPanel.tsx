@@ -8,24 +8,19 @@ interface MapPanelProps {
   center: Coordinate;
   polygon?: any;
   onMapClick?: (lat: number, lng: number) => void;
-  onSelectionEnd?: (bounds: [[number, number], [number, number]]) => void;
   isSelectMode: boolean;
 }
 
 declare const L: any;
 
 const MapPanel: React.FC<MapPanelProps> = ({ 
-  id, title, center, polygon, onMapClick, onSelectionEnd, isSelectMode 
+  id, title, center, polygon, onMapClick
 }) => {
   const mapRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const polygonLayerRef = useRef<any>(null);
   const markerRef = useRef<any>(null);
-  const selectionBoxRef = useRef<any>(null);
-  const isMouseDownRef = useRef(false);
-  const startLatLngRef = useRef<any>(null);
 
-  // 1. Initial Map Setup
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -34,6 +29,7 @@ const MapPanel: React.FC<MapPanelProps> = ({
 
     if (mapRef.current) {
         mapRef.current.remove();
+        mapRef.current = null;
     }
 
     try {
@@ -49,7 +45,6 @@ const MapPanel: React.FC<MapPanelProps> = ({
         maxZoom: 19,
       }).addTo(mapRef.current);
 
-      // Robust size management
       const resizeObserver = new ResizeObserver(() => {
         if (mapRef.current) {
           mapRef.current.invalidateSize();
@@ -69,89 +64,22 @@ const MapPanel: React.FC<MapPanelProps> = ({
     }
   }, []);
 
-  // 2. Interaction & Mode Sync
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    // CRITICAL: Force Tile Rendering immediately on mode change.
-    // Transitions are removed to prevent Leaflet from miscalculating size during layout shifts.
-    map.invalidateSize();
-
-    const onMouseDown = (e: any) => {
-      if (!isSelectMode) return;
-      L.DomEvent.stopPropagation(e);
-      isMouseDownRef.current = true;
-      startLatLngRef.current = e.latlng;
-      
-      if (selectionBoxRef.current) map.removeLayer(selectionBoxRef.current);
-      selectionBoxRef.current = L.rectangle([e.latlng, e.latlng], {
-        color: "#f59e0b",
-        weight: 3,
-        fillOpacity: 0.15,
-        dashArray: '8, 8',
-        interactive: false
-      }).addTo(map);
-    };
-
-    const onMouseMove = (e: any) => {
-      if (!isSelectMode || !isMouseDownRef.current || !selectionBoxRef.current) return;
-      L.DomEvent.stopPropagation(e);
-      selectionBoxRef.current.setBounds(L.latLngBounds(startLatLngRef.current, e.latlng));
-    };
-
-    const onMouseUp = (e: any) => {
-      if (!isSelectMode || !isMouseDownRef.current) return;
-      L.DomEvent.stopPropagation(e);
-      isMouseDownRef.current = false;
-      
-      if (selectionBoxRef.current) {
-        const bounds = selectionBoxRef.current.getBounds();
-        const sw = bounds.getSouthWest();
-        const ne = bounds.getNorthEast();
-        const dist = Math.abs(sw.lat - ne.lat) + Math.abs(sw.lng - ne.lng);
-        
-        if (dist > 0.001 && onSelectionEnd) {
-          onSelectionEnd([[sw.lat, sw.lng], [ne.lat, ne.lng]]);
-        }
-        map.removeLayer(selectionBoxRef.current);
-        selectionBoxRef.current = null;
-      }
-      startLatLngRef.current = null;
-    };
-
     const handlePointClick = (e: any) => {
-      if (!isSelectMode && onMapClick) {
+      if (onMapClick) {
         onMapClick(e.latlng.lat, e.latlng.lng);
       }
     };
 
-    if (isSelectMode) {
-      map.dragging.disable();
-      map.touchZoom.disable();
-      map.doubleClickZoom.disable();
-      map.on('mousedown', onMouseDown);
-      map.on('mousemove', onMouseMove);
-      map.on('mouseup', onMouseUp);
-    } else {
-      map.dragging.enable();
-      map.touchZoom.enable();
-      map.doubleClickZoom.enable();
-      map.off('mousedown', onMouseDown);
-      map.off('mousemove', onMouseMove);
-      map.off('mouseup', onMouseUp);
-    }
     map.on('click', handlePointClick);
-
     return () => {
-      map.off('mousedown', onMouseDown);
-      map.off('mousemove', onMouseMove);
-      map.off('mouseup', onMouseUp);
       map.off('click', handlePointClick);
     };
-  }, [isSelectMode, onSelectionEnd, onMapClick]);
+  }, [onMapClick]);
 
-  // 3. Data Sync (Center & Polygons)
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -173,15 +101,15 @@ const MapPanel: React.FC<MapPanelProps> = ({
     if (isValidPolygon(polygon)) {
       try {
         polygonLayerRef.current = L.polygon(polygon, {
-          color: title.toLowerCase().includes('source') ? '#2563eb' : '#dc2626',
-          fillColor: title.toLowerCase().includes('source') ? '#3b82f6' : '#ef4444',
-          fillOpacity: 0.25,
+          color: title.toLowerCase().includes('current') ? '#d97706' : '#2563eb',
+          fillColor: title.toLowerCase().includes('current') ? '#fbbf24' : '#3b82f6',
+          fillOpacity: 0.2,
           weight: 2
         }).addTo(map);
         
         const bounds = polygonLayerRef.current.getBounds();
-        if (bounds && bounds.isValid() && !isMouseDownRef.current) {
-          map.fitBounds(bounds, { padding: [80, 80], maxZoom: 12 });
+        if (bounds && bounds.isValid()) {
+          map.fitBounds(bounds, { padding: [60, 60], maxZoom: 12 });
         }
       } catch (err) {
         console.warn("Polygon draw error:", err);
@@ -192,17 +120,16 @@ const MapPanel: React.FC<MapPanelProps> = ({
         map.panTo([center.lat, center.lng], { animate: true });
       }
     }
+
+    const t = setTimeout(() => map.invalidateSize(), 100);
+    return () => clearTimeout(t);
   }, [center, polygon, title]);
 
   return (
-    <div className="relative w-full h-full flex flex-col bg-white overflow-hidden">
-      {/* Absolute Overlay UI */}
+    <div className="absolute inset-0 h-full w-full flex flex-col bg-white overflow-hidden">
       <div className="absolute top-4 left-4 right-4 z-[1000] flex justify-between items-start pointer-events-none">
         <div className="flex flex-col gap-1.5 pointer-events-auto">
-          <div className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-xl border flex items-center gap-2 ${
-            isSelectMode ? 'bg-amber-500 text-white border-amber-600 scale-105' : 'bg-white/95 backdrop-blur-md text-slate-800 border-slate-200'
-          }`}>
-            {isSelectMode && <div className="w-2 h-2 bg-white rounded-full animate-pulse" />}
+          <div className="px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-xl border bg-white/95 backdrop-blur-md text-slate-800 border-slate-200">
             {title}
           </div>
           <div className="bg-slate-900/80 backdrop-blur-md text-white px-3 py-1.5 rounded-xl text-[9px] font-mono shadow-lg w-fit">
@@ -210,12 +137,7 @@ const MapPanel: React.FC<MapPanelProps> = ({
           </div>
         </div>
       </div>
-
-      {/* Map Body: Use pure absolute positioning to avoid flex container quirks */}
-      <div 
-        ref={containerRef} 
-        className={`absolute inset-0 z-0 ${isSelectMode ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`}
-      />
+      <div ref={containerRef} className="flex-grow h-full w-full z-0 cursor-grab active:cursor-grabbing" style={{ height: '100%', width: '100%' }} />
     </div>
   );
 };
