@@ -155,50 +155,59 @@ const App: React.FC = () => {
           <span className="bg-amber-600 text-white w-10 h-10 flex items-center justify-center rounded-2xl shadow-xl shadow-amber-100 font-bold text-xl">🐾</span>
           <div>
             <h1 className="text-lg font-black text-slate-900 tracking-tight leading-none">Antipode Mole</h1>
-            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Digging through the Earth</p>
+            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Global Tunneling Simulator</p>
           </div>
         </div>
         
         <div className="flex gap-2.5">
            {view === 'anti' && (
               <button onClick={backToSource} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-2xl text-[11px] transition-all flex items-center gap-2 border border-slate-200 shadow-sm active:scale-95">
-                ← Return Home
+                ← Return to Surface
               </button>
            )}
-           <button 
-             onClick={triggerDiscovery}
-             disabled={isAnimating}
-             className="px-8 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-2xl shadow-xl shadow-amber-100 transition-all disabled:opacity-50 text-[11px] active:scale-95"
-           >
-             Dig to Antipode!
-           </button>
         </div>
       </header>
 
       {view === 'source' && (
-        <section className="flex-shrink-0 bg-white border-b border-slate-100 px-4 md:px-8 py-3 flex items-center gap-5 overflow-hidden z-40">
-            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest shrink-0 border-r border-slate-100 pr-5">Small → Large</span>
-            <div className="flex flex-row gap-2.5 overflow-x-auto whitespace-nowrap scrollbar-hide flex-grow h-full items-center">
-            {hierarchy.length > 0 ? (
-                hierarchy.map((level, idx) => (
-                <button 
-                    key={idx}
-                    className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[11px] font-bold text-slate-700 hover:bg-amber-600 hover:border-amber-600 hover:text-white transition-all flex items-center gap-2.5 active:scale-95 shadow-sm"
-                    onClick={() => handleLevelClick(level.query)}
-                >
-                    {level.name}
-                    {idx < hierarchy.length - 1 && <svg className="w-2.5 h-2.5 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M9 5l7 7-7 7"></path></svg>}
-                </button>
-                ))
-            ) : (
-                <div className="text-slate-300 italic text-[11px] py-1.5 flex items-center gap-2">
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                    Click map to find a location...
-                </div>
-            )}
-            </div>
-            {isLoading && <div className="flex-shrink-0 w-3.5 h-3.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>}
-        </section>
+        <>
+          <section className="flex-shrink-0 bg-white border-b border-slate-100 px-4 md:px-8 py-2.5 flex flex-col md:flex-row md:items-center gap-2 md:gap-5 overflow-hidden z-40">
+              <p className="text-[11px] font-medium text-slate-500 max-w-[200px] leading-tight shrink-0 italic">
+                Click map to select a spot. Choose a region, then dig to the other side!
+              </p>
+              <div className="flex flex-row gap-2.5 overflow-x-auto whitespace-nowrap scrollbar-hide flex-grow h-full items-center py-1">
+              {hierarchy.length > 0 ? (
+                  hierarchy.map((level, idx) => (
+                  <button 
+                      key={idx}
+                      className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[11px] font-bold text-slate-700 hover:bg-amber-600 hover:border-amber-600 hover:text-white transition-all flex items-center gap-2.5 active:scale-95 shadow-sm"
+                      onClick={() => handleLevelClick(level.query)}
+                  >
+                      {level.name}
+                      {idx < hierarchy.length - 1 && <svg className="w-2.5 h-2.5 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M9 5l7 7-7 7"></path></svg>}
+                  </button>
+                  ))
+              ) : (
+                  <div className="text-slate-300 italic text-[11px] py-1.5 flex items-center gap-2">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                      Waiting for your first click...
+                  </div>
+              )}
+              </div>
+              {isLoading && <div className="flex-shrink-0 w-3.5 h-3.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>}
+          </section>
+
+          <div className="flex-shrink-0 px-4 md:px-8 py-2 bg-white flex justify-center border-b border-slate-100 shadow-sm z-30">
+            <button 
+              onClick={triggerDiscovery}
+              disabled={isAnimating}
+              className="w-full max-w-xl py-3.5 bg-amber-600 hover:bg-amber-700 text-white font-black rounded-2xl shadow-xl shadow-amber-100 transition-all disabled:opacity-50 text-[13px] tracking-wide active:scale-[0.98] flex items-center justify-center gap-3 group"
+            >
+              <span className="group-hover:animate-bounce">🕳️</span>
+              Dig to Antipode!
+              <span className="group-hover:animate-bounce">🕳️</span>
+            </button>
+          </div>
+        </>
       )}
 
       <main className="flex-grow relative bg-white overflow-hidden">
