@@ -22,23 +22,34 @@ const MoleAnimation: React.FC<MoleAnimationProps> = ({ isAnimating, onFinish, di
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center pointer-events-none">
       <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
-        {/* Semi-transparent Earth core visual during transition */}
-        <div className={`absolute inset-0 bg-amber-900/40 transition-opacity duration-1000 ${isAnimating ? 'opacity-100' : 'opacity-0'}`} />
+        {/* Layered earth transition effect */}
+        <div className={`absolute inset-0 bg-slate-900 transition-opacity duration-700 ${isAnimating ? 'opacity-90' : 'opacity-0'}`}>
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_transparent_0%,_#451a03_100%)] opacity-60"></div>
+        </div>
         
         <div className="mole-animating flex flex-col items-center">
-            {/* SVG Mole Character */}
-            <svg width="120" height="120" viewBox="0 0 100 100" className="drop-shadow-2xl">
-                <circle cx="50" cy="60" r="35" fill="#8B4513" /> {/* Body */}
-                <circle cx="50" cy="35" r="25" fill="#8B4513" /> {/* Head */}
-                <circle cx="40" cy="30" r="4" fill="black" /> {/* Eye L */}
-                <circle cx="60" cy="30" r="4" fill="black" /> {/* Eye R */}
-                <ellipse cx="50" cy="40" rx="8" ry="5" fill="#FFB6C1" /> {/* Nose */}
-                <path d="M 40 70 Q 50 85 60 70" fill="none" stroke="white" strokeWidth="2" /> {/* Belly patch */}
-                <path d="M 20 40 L 10 30" stroke="#8B4513" strokeWidth="4" /> {/* Whisker */}
-                <path d="M 80 40 L 90 30" stroke="#8B4513" strokeWidth="4" /> {/* Whisker */}
+            {/* SVG Mole Character with better details */}
+            <svg width="150" height="150" viewBox="0 0 100 100" className="drop-shadow-[0_20px_50px_rgba(251,191,36,0.3)]">
+                <circle cx="50" cy="65" r="32" fill="#78350f" /> {/* Body */}
+                <circle cx="50" cy="38" r="24" fill="#78350f" /> {/* Head */}
+                <circle cx="42" cy="34" r="3.5" fill="black" /> {/* Eye L */}
+                <circle cx="58" cy="34" r="3.5" fill="black" /> {/* Eye R */}
+                <circle cx="50" cy="42" r="7" fill="#fecaca" /> {/* Nose */}
+                <path d="M 35 70 Q 50 82 65 70" fill="none" stroke="#a16207" strokeWidth="2.5" strokeLinecap="round" /> {/* Belly */}
+                
+                {/* Paws */}
+                <ellipse cx="25" cy="60" rx="6" ry="10" fill="#78350f" transform="rotate(-30 25 60)" />
+                <ellipse cx="75" cy="60" rx="6" ry="10" fill="#78350f" transform="rotate(30 75 60)" />
             </svg>
-            <div className="mt-4 px-6 py-2 bg-white rounded-full shadow-lg border-2 border-amber-600 font-bold text-amber-800">
-                {direction === 'down' ? 'Digging down...' : 'Coming out!'}
+            
+            <div className="mt-8 px-10 py-4 bg-amber-50 rounded-3xl shadow-2xl border-4 border-amber-600 font-black text-amber-900 text-lg uppercase tracking-widest animate-bounce">
+                {direction === 'down' ? 'Digging to the Core...' : 'Popping up at the Antipode!'}
+            </div>
+            
+            <div className="mt-4 flex gap-1">
+                <div className="w-3 h-3 bg-amber-600 rounded-full animate-ping"></div>
+                <div className="w-3 h-3 bg-amber-500 rounded-full animate-ping [animation-delay:0.2s]"></div>
+                <div className="w-3 h-3 bg-amber-400 rounded-full animate-ping [animation-delay:0.4s]"></div>
             </div>
         </div>
       </div>

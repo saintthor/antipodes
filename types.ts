@@ -7,14 +7,15 @@ export interface Coordinate {
 export interface GeoRegion {
   name: string;
   type: string;
-  polygon?: number[][][]; // Array of rings, each ring is [lat, lng][]
-  bounds?: [number, number][]; // [[lat, lng], [lat, lng]]
+  polygon?: any; 
+  bounds?: [number, number][];
 }
 
 export interface NominatimResult {
   display_name: string;
   type: string;
   address: {
+    [key: string]: string | undefined;
     neighbourhood?: string;
     suburb?: string;
     city_district?: string;
@@ -24,9 +25,11 @@ export interface NominatimResult {
     city?: string;
     municipality?: string;
     county?: string;
+    district?: string;
     province?: string;
     state_district?: string;
     state?: string;
+    department?: string;
     region?: string;
     country?: string;
     country_code?: string;

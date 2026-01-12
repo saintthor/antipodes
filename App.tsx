@@ -1,16 +1,17 @@
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import MapPanel from './components/MapPanel';
 import MoleAnimation from './components/MoleAnimation';
-import { Coordinate, NominatimResult } from './types';
+import { Coordinate } from './types';
 import { calculateAntipode, calculatePolygonAntipodes, reverseGeocode, searchGeocode } from './services/geoService';
 
 const App: React.FC = () => {
-  const [sourceCenter, setSourceCenter] = useState<Coordinate>({ lat: 39.9042, lng: 116.4074 }); // Beijing
+  const [view, setView] = useState<'source' | 'anti'>('source');
+  const [sourceCenter, setSourceCenter] = useState<Coordinate>({ lat: 39.9042, lng: 116.4074 }); 
   const [antiCenter, setAntiCenter] = useState<Coordinate>(calculateAntipode({ lat: 39.9042, lng: 116.4074 }));
   
-  const [sourcePolygon, setSourcePolygon] = useState<[number, number][][] | undefined>();
-  const [antiPolygon, setAntiPolygon] = useState<[number, number][][] | undefined>();
+  const [sourcePolygon, setSourcePolygon] = useState<any>(null);
+  const [antiPolygon, setAntiPolygon] = useState<any>(null);
   
   const [hierarchy, setHierarchy] = useState<{ name: string, query: string }[]>([]);
   const [isSelectMode, setIsSelectMode] = useState(false);
@@ -18,238 +19,216 @@ const App: React.FC = () => {
   const [animationStage, setAnimationStage] = useState<'down' | 'up'>('down');
   const [isLoading, setIsLoading] = useState(false);
 
-  const updateAntipodes = (sourcePoly?: [number, number][][]) => {
+  const updateAntipodes = (sourcePoly: any) => {
     const newAntiCenter = calculateAntipode(sourceCenter);
     setAntiCenter(newAntiCenter);
-    
-    if (sourcePoly) {
+    if (sourcePoly && Array.isArray(sourcePoly) && Array.isArray(sourcePoly[0])) {
       setAntiPolygon(calculatePolygonAntipodes(sourcePoly));
     } else {
-      setAntiPolygon(undefined);
+      setAntiPolygon(null);
     }
   };
 
-  const handleMapClick = async (lat: number, lng: number) => {
+  const handleMapClick = useCallback(async (lat: number, lng: number) => {
     setIsLoading(true);
     setSourceCenter({ lat, lng });
     try {
       const results = await reverseGeocode(lat, lng);
-      if (results && results.length > 0 && results[0]) {
-        const addr = results[0].address;
-        const levels: { name: string, query: string }[] = [];
+      if (results && results.length > 0) {
+        const result = results[0];
         
-        if (addr) {
-          // Comprehensive list of potential address keys for global compatibility
-          const keys: (keyof typeof addr)[] = [
-            'neighbourhood',
-            'suburb',
-            'city_district',
-            'hamlet',
-            'village',
-            'town',
-            'city',
-            'municipality',
-            'county',
-            'province',
-            'state_district',
-            'state',
-            'region',
-            'country'
-          ];
+        // Nominatim's display_name is naturally ordered Smallest -> Largest.
+        // We use this as our primary source of hierarchy for maximum reliability.
+        if (result.display_name) {
+          const parts = result.display_name.split(',').map(p => p.trim());
+          const levels: { name: string, query: string }[] = [];
+          const seen = new Set<string>();
 
-          const seenNames = new Set<string>();
-
-          keys.forEach((key) => {
-            const val = addr[key];
-            if (val && typeof val === 'string' && !seenNames.has(val)) {
-              let query = val;
-              // Improve query precision by appending parent info
-              if (['neighbourhood', 'suburb', 'city_district', 'hamlet', 'village'].includes(key)) {
-                const parent = addr.city || addr.town || addr.municipality || addr.province || addr.state || '';
-                if (parent && parent !== val) query += `, ${parent}`;
-              } else if (['city', 'town', 'county', 'province'].includes(key)) {
-                const parent = addr.state || addr.country || '';
-                if (parent && parent !== val) query += `, ${parent}`;
-              }
-
-              levels.push({ name: val, query });
-              seenNames.add(val);
+          parts.forEach((part) => {
+            const lower = part.toLowerCase();
+            // Filter out zip codes, very short strings (codes), and duplicates
+            if (part && 
+                !seen.has(lower) && 
+                isNaN(Number(part)) && 
+                part.length > 2) {
+              levels.push({ name: part, query: part });
+              seen.add(lower);
             }
           });
-          
-          // Fallback if no specific levels were found but display_name exists
-          if (levels.length === 0 && results[0].display_name) {
-             const parts = results[0].display_name.split(',').map(s => s.trim());
-             if (parts.length > 0) {
-               levels.push({ name: parts[0], query: results[0].display_name });
+          setHierarchy(levels);
+        }
+
+        // Polygon detection
+        if (result.geojson && (result.geojson.type === 'Polygon' || result.geojson.type === 'MultiPolygon')) {
+           const convertCoords = (coords: any): any => {
+             if (!coords) return null;
+             if (Array.isArray(coords) && coords.length === 2 && typeof coords[0] === 'number') {
+               return [coords[1], coords[0]]; 
              }
-          }
-        }
-
-        setHierarchy(levels);
-
-        // Set polygon to the most specific result found
-        if (results[0].geojson && (results[0].geojson.type === 'Polygon' || results[0].geojson.type === 'MultiPolygon')) {
-           const poly = results[0].geojson.type === 'Polygon' 
-            ? [results[0].geojson.coordinates[0].map((c: any) => [c[1], c[0]])]
-            : results[0].geojson.coordinates.map((ring: any) => ring[0].map((c: any) => [c[1], c[0]]));
-           setSourcePolygon(poly);
+             if (Array.isArray(coords)) {
+               return coords.map(convertCoords).filter((c: any) => c !== null);
+             }
+             return null;
+           };
+           const converted = convertCoords(result.geojson.coordinates);
+           if (Array.isArray(converted) && Array.isArray(converted[0])) {
+              setSourcePolygon(converted);
+           } else {
+              setSourcePolygon(null);
+           }
         } else {
-           setSourcePolygon(undefined);
+           setSourcePolygon(null);
         }
-      } else {
-        setHierarchy([]);
-        setSourcePolygon(undefined);
       }
     } catch (err) {
-      console.error(err);
-      setHierarchy([]);
-      setSourcePolygon(undefined);
+      console.error("Geocoding failed:", err);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
-  const handleLevelClick = async (query: string) => {
+  const handleLevelClick = useCallback(async (query: string) => {
     setIsLoading(true);
     try {
       const results = await searchGeocode(query);
       if (results && results.length > 0) {
-        // Find best match with polygon data
-        const resultWithPolygon = results.find(r => r.geojson && (r.geojson.type === 'Polygon' || r.geojson.type === 'MultiPolygon')) || results[0];
-        
-        if (resultWithPolygon.geojson && (resultWithPolygon.geojson.type === 'Polygon' || resultWithPolygon.geojson.type === 'MultiPolygon')) {
-           const poly = resultWithPolygon.geojson.type === 'Polygon' 
-            ? [resultWithPolygon.geojson.coordinates[0].map((c: any) => [c[1], c[0]])]
-            : resultWithPolygon.geojson.coordinates.map((ring: any) => ring[0].map((c: any) => [c[1], c[0]]));
-           
-           setSourcePolygon(poly);
-           
-           const bbox = resultWithPolygon.boundingbox.map(Number);
-           const newCenter = { lat: (bbox[0] + bbox[1]) / 2, lng: (bbox[2] + bbox[3]) / 2 };
-           setSourceCenter(newCenter);
+        // Find result with polygon
+        const result = results.find(r => r.geojson && (r.geojson.type === 'Polygon' || r.geojson.type === 'MultiPolygon')) || results[0];
+        if (result.geojson && (result.geojson.type === 'Polygon' || result.geojson.type === 'MultiPolygon')) {
+           const convertCoords = (coords: any): any => {
+             if (!coords) return null;
+             if (Array.isArray(coords) && coords.length === 2 && typeof coords[0] === 'number') {
+               return [coords[1], coords[0]];
+             }
+             if (Array.isArray(coords)) {
+               return coords.map(convertCoords).filter((c: any) => c !== null);
+             }
+             return null;
+           };
+           const converted = convertCoords(result.geojson.coordinates);
+           if (Array.isArray(converted) && Array.isArray(converted[0])) {
+              setSourcePolygon(converted);
+           }
+           if (result.boundingbox) {
+             const bbox = result.boundingbox.map(Number);
+             setSourceCenter({ lat: (bbox[0] + bbox[1]) / 2, lng: (bbox[2] + bbox[3]) / 2 });
+           }
         }
       }
     } catch (err) {
-      console.error(err);
+      console.error("Search failed:", err);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
-  const handleSelectionEnd = (bounds: [[number, number], [number, number]]) => {
+  const handleSelectionEnd = useCallback((bounds: [[number, number], [number, number]]) => {
     const [[s, w], [n, e]] = bounds;
-    const poly: [number, number][][] = [[
-      [n, w], [n, e], [s, e], [s, w], [n, w]
-    ]];
+    const poly: [number, number][] = [[n, w], [n, e], [s, e], [s, w], [n, w]];
     setSourcePolygon(poly);
     setSourceCenter({ lat: (n + s) / 2, lng: (w + e) / 2 });
-    setHierarchy([]);
+    setHierarchy([]); 
     setIsSelectMode(false);
-  };
+  }, []);
 
   const triggerDiscovery = () => {
     setIsAnimating(true);
     setAnimationStage('down');
-    
     setTimeout(() => {
       setAnimationStage('up');
       updateAntipodes(sourcePolygon);
+      setView('anti');
     }, 1500);
   };
 
+  const backToSource = () => {
+    setView('source');
+  };
+
   return (
-    <div className="flex flex-col h-screen w-screen p-4 gap-4 bg-slate-50">
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-black text-slate-800 tracking-tight">Antipodes Area Explorer</h1>
-          <p className="text-slate-500 font-medium">Discover what's exactly on the other side of your world.</p>
+    <div className="h-full w-full flex flex-col bg-slate-50 overflow-hidden">
+      <header className="flex-shrink-0 bg-white border-b border-slate-100 p-4 md:px-8 flex justify-between items-center z-50">
+        <div className="flex items-center gap-3">
+          <span className="bg-indigo-600 text-white w-10 h-10 flex items-center justify-center rounded-2xl shadow-xl shadow-indigo-100 font-bold text-xl">🕳️</span>
+          <div>
+            <h1 className="text-lg font-black text-slate-900 tracking-tight leading-none">Antipodes</h1>
+            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Surface Explorer</p>
+          </div>
         </div>
         
-        <div className="flex gap-2 bg-white p-1 rounded-xl shadow-sm border border-slate-200">
+        <div className="flex gap-2.5">
+           {view === 'anti' && (
+              <button onClick={backToSource} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-2xl text-[11px] transition-all flex items-center gap-2 border border-slate-200 shadow-sm active:scale-95">
+                ← Return to Surface
+              </button>
+           )}
            <button 
              onClick={() => setIsSelectMode(!isSelectMode)}
-             className={`px-4 py-2 rounded-lg font-bold transition-all ${isSelectMode ? 'bg-amber-500 text-white shadow-md' : 'bg-transparent text-slate-600 hover:bg-slate-100'}`}
+             className={`px-5 py-2.5 rounded-2xl font-bold text-[11px] transition-all flex items-center gap-2 border shadow-sm ${
+               isSelectMode ? 'bg-amber-500 text-white border-amber-600 shadow-amber-200' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+             }`}
            >
-             {isSelectMode ? 'Cancel Selecting' : 'Select Rectangle Area'}
+             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
+             {isSelectMode ? 'Exit Selection' : 'Select Rectangle'}
            </button>
            <button 
              onClick={triggerDiscovery}
              disabled={isAnimating}
-             className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-lg hover:shadow-indigo-200 transition-all disabled:opacity-50"
+             className="px-8 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl shadow-xl shadow-indigo-100 transition-all disabled:opacity-50 text-[11px] active:scale-95"
            >
-             Get Antipodal Area
+             Dig to Antipode
            </button>
         </div>
       </header>
 
-      <main className="flex-grow flex flex-col lg:flex-row gap-4 overflow-hidden">
-        <div className="w-full lg:w-80 flex flex-col gap-4 overflow-y-auto pr-1">
-          <section className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-            <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">Area Hierarchy</h2>
-            {isLoading ? (
-              <div className="animate-pulse flex space-y-2 flex-col">
-                <div className="h-4 bg-slate-200 rounded w-3/4"></div>
-                <div className="h-4 bg-slate-200 rounded w-1/2"></div>
-              </div>
-            ) : hierarchy.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
-                {hierarchy.map((level, idx) => (
-                  <button 
+      {view === 'source' && (
+        <section className="flex-shrink-0 bg-white border-b border-slate-100 px-4 md:px-8 py-3.5 flex items-center gap-5 overflow-hidden z-40">
+            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest shrink-0 border-r border-slate-100 pr-5">Small → Large</span>
+            <div className="flex flex-row gap-2.5 overflow-x-auto whitespace-nowrap scrollbar-hide flex-grow">
+            {hierarchy.length > 0 ? (
+                hierarchy.map((level, idx) => (
+                <button 
                     key={idx}
-                    className="px-3 py-1 bg-slate-100 border border-slate-200 rounded-full text-xs text-slate-700 hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all flex items-center"
+                    className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[11px] font-bold text-slate-700 hover:bg-indigo-600 hover:border-indigo-600 hover:text-white transition-all flex items-center gap-2.5 active:scale-95 shadow-sm"
                     onClick={() => handleLevelClick(level.query)}
-                  >
+                >
                     {level.name}
-                    <svg className="w-3 h-3 ml-1 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path></svg>
-                  </button>
-                ))}
-              </div>
+                    {idx < hierarchy.length - 1 && <svg className="w-2.5 h-2.5 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M9 5l7 7-7 7"></path></svg>}
+                </button>
+                ))
             ) : (
-              <p className="text-slate-400 italic text-sm">Click anywhere on the source map to identify a region.</p>
+                <div className="text-slate-300 italic text-[11px] py-1.5 flex items-center gap-2">
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    Click map to reveal regional hierarchy...
+                </div>
             )}
-          </section>
+            </div>
+            {isLoading && <div className="flex-shrink-0 w-3.5 h-3.5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>}
+        </section>
+      )}
 
-          <section className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-             <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">Geographic Legend</h2>
-             <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                   <div className="w-4 h-4 bg-blue-500 rounded opacity-50"></div>
-                   <span className="text-sm font-medium text-slate-600">Source Region</span>
-                </div>
-                <div className="flex items-center gap-3">
-                   <div className="w-4 h-4 bg-red-500 rounded opacity-50"></div>
-                   <span className="text-sm font-medium text-slate-600">Antipodal Region</span>
-                </div>
-             </div>
-          </section>
-
-          <section className="bg-indigo-900 p-4 rounded-xl shadow-lg text-white">
-             <h2 className="font-bold text-indigo-200 text-xs uppercase mb-2">Did you know?</h2>
-             <p className="text-sm opacity-90 leading-relaxed">
-               Most land masses on Earth have oceans on their opposite side. For example, if you dig down from Beijing, you'll end up near the coast of Argentina in the Atlantic Ocean!
-             </p>
-          </section>
-        </div>
-
-        <div className="flex-grow grid grid-cols-1 md:grid-cols-2 gap-4">
+      <main className="flex-grow flex flex-col relative bg-slate-100 overflow-hidden">
+        {view === 'source' ? (
           <MapPanel 
+            key="source-map-instance"
             id="source-map" 
-            title="Source Area" 
+            title="Source Surface" 
             center={sourceCenter} 
             polygon={sourcePolygon}
             onMapClick={handleMapClick}
             onSelectionEnd={handleSelectionEnd}
             isSelectMode={isSelectMode}
           />
+        ) : (
           <MapPanel 
+            key="anti-map-instance"
             id="anti-map" 
-            title="Antipodal Area" 
+            title="Antipodal Result" 
             center={antiCenter} 
             polygon={antiPolygon}
             isSelectMode={false}
           />
-        </div>
+        )}
       </main>
 
       <MoleAnimation 
@@ -257,11 +236,6 @@ const App: React.FC = () => {
         onFinish={() => setIsAnimating(false)} 
         direction={animationStage}
       />
-
-      <footer className="text-xs text-slate-400 flex justify-between items-center py-2 px-1">
-        <div>Coordinates are calculated using the WGS84 ellipsoid model.</div>
-        <div className="font-mono">Mole Exploration Engine v1.2.1</div>
-      </footer>
     </div>
   );
 };

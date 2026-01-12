@@ -6,7 +6,7 @@ interface MapPanelProps {
   id: string;
   title: string;
   center: Coordinate;
-  polygon?: [number, number][][];
+  polygon?: any;
   onMapClick?: (lat: number, lng: number) => void;
   onSelectionEnd?: (bounds: [[number, number], [number, number]]) => void;
   isSelectMode: boolean;
@@ -22,99 +22,200 @@ const MapPanel: React.FC<MapPanelProps> = ({
   const polygonLayerRef = useRef<any>(null);
   const markerRef = useRef<any>(null);
   const selectionBoxRef = useRef<any>(null);
+  const isMouseDownRef = useRef(false);
   const startLatLngRef = useRef<any>(null);
 
+  // 1. Initial Map Setup
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
+    if (!containerRef.current) return;
 
-    mapRef.current = L.map(id).setView([center.lat, center.lng], 3);
+    const lat = (typeof center?.lat === 'number') ? center.lat : 0;
+    const lng = (typeof center?.lng === 'number') ? center.lng : 0;
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors'
-    }).addTo(mapRef.current);
+    if (mapRef.current) {
+        mapRef.current.remove();
+    }
 
-    mapRef.current.on('click', (e: any) => {
+    try {
+      mapRef.current = L.map(containerRef.current, {
+        zoomControl: true,
+        scrollWheelZoom: true,
+        doubleClickZoom: true,
+        boxZoom: false,
+        attributionControl: false
+      }).setView([lat, lng], 3);
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+      }).addTo(mapRef.current);
+
+      // Robust size management
+      const resizeObserver = new ResizeObserver(() => {
+        if (mapRef.current) {
+          mapRef.current.invalidateSize();
+        }
+      });
+      resizeObserver.observe(containerRef.current);
+
+      return () => {
+        resizeObserver.disconnect();
+        if (mapRef.current) {
+          mapRef.current.remove();
+          mapRef.current = null;
+        }
+      };
+    } catch (e) {
+      console.error("Leaflet init failed:", e);
+    }
+  }, []);
+
+  // 2. Interaction & Mode Sync
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // CRITICAL: Force Tile Rendering immediately on mode change.
+    // Transitions are removed to prevent Leaflet from miscalculating size during layout shifts.
+    map.invalidateSize();
+
+    const onMouseDown = (e: any) => {
+      if (!isSelectMode) return;
+      L.DomEvent.stopPropagation(e);
+      isMouseDownRef.current = true;
+      startLatLngRef.current = e.latlng;
+      
+      if (selectionBoxRef.current) map.removeLayer(selectionBoxRef.current);
+      selectionBoxRef.current = L.rectangle([e.latlng, e.latlng], {
+        color: "#f59e0b",
+        weight: 3,
+        fillOpacity: 0.15,
+        dashArray: '8, 8',
+        interactive: false
+      }).addTo(map);
+    };
+
+    const onMouseMove = (e: any) => {
+      if (!isSelectMode || !isMouseDownRef.current || !selectionBoxRef.current) return;
+      L.DomEvent.stopPropagation(e);
+      selectionBoxRef.current.setBounds(L.latLngBounds(startLatLngRef.current, e.latlng));
+    };
+
+    const onMouseUp = (e: any) => {
+      if (!isSelectMode || !isMouseDownRef.current) return;
+      L.DomEvent.stopPropagation(e);
+      isMouseDownRef.current = false;
+      
+      if (selectionBoxRef.current) {
+        const bounds = selectionBoxRef.current.getBounds();
+        const sw = bounds.getSouthWest();
+        const ne = bounds.getNorthEast();
+        const dist = Math.abs(sw.lat - ne.lat) + Math.abs(sw.lng - ne.lng);
+        
+        if (dist > 0.001 && onSelectionEnd) {
+          onSelectionEnd([[sw.lat, sw.lng], [ne.lat, ne.lng]]);
+        }
+        map.removeLayer(selectionBoxRef.current);
+        selectionBoxRef.current = null;
+      }
+      startLatLngRef.current = null;
+    };
+
+    const handlePointClick = (e: any) => {
       if (!isSelectMode && onMapClick) {
         onMapClick(e.latlng.lat, e.latlng.lng);
       }
-    });
+    };
 
-    // Custom rectangle selection logic
-    mapRef.current.on('mousedown', (e: any) => {
-      if (!isSelectMode) return;
-      mapRef.current.dragging.disable();
-      startLatLngRef.current = e.latlng;
-      
-      if (selectionBoxRef.current) {
-        mapRef.current.removeLayer(selectionBoxRef.current);
-      }
-      
-      selectionBoxRef.current = L.rectangle([e.latlng, e.latlng], {
-        color: "#ff7800", weight: 1, fillOpacity: 0.2
-      }).addTo(mapRef.current);
-    });
-
-    mapRef.current.on('mousemove', (e: any) => {
-      if (!isSelectMode || !startLatLngRef.current || !selectionBoxRef.current) return;
-      selectionBoxRef.current.setBounds(L.latLngBounds(startLatLngRef.current, e.latlng));
-    });
-
-    mapRef.current.on('mouseup', (e: any) => {
-      if (!isSelectMode || !startLatLngRef.current) return;
-      const bounds = L.latLngBounds(startLatLngRef.current, e.latlng);
-      
-      const sw = bounds.getSouthWest();
-      const ne = bounds.getNorthEast();
-      
-      if (onSelectionEnd) {
-        onSelectionEnd([[sw.lat, sw.lng], [ne.lat, ne.lng]]);
-      }
-      
-      startLatLngRef.current = null;
-      mapRef.current.dragging.enable();
-    });
+    if (isSelectMode) {
+      map.dragging.disable();
+      map.touchZoom.disable();
+      map.doubleClickZoom.disable();
+      map.on('mousedown', onMouseDown);
+      map.on('mousemove', onMouseMove);
+      map.on('mouseup', onMouseUp);
+    } else {
+      map.dragging.enable();
+      map.touchZoom.enable();
+      map.doubleClickZoom.enable();
+      map.off('mousedown', onMouseDown);
+      map.off('mousemove', onMouseMove);
+      map.off('mouseup', onMouseUp);
+    }
+    map.on('click', handlePointClick);
 
     return () => {
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
+      map.off('mousedown', onMouseDown);
+      map.off('mousemove', onMouseMove);
+      map.off('mouseup', onMouseUp);
+      map.off('click', handlePointClick);
     };
-  }, []);
+  }, [isSelectMode, onSelectionEnd, onMapClick]);
 
+  // 3. Data Sync (Center & Polygons)
   useEffect(() => {
-    if (mapRef.current) {
-      mapRef.current.setView([center.lat, center.lng], mapRef.current.getZoom());
-      
-      if (markerRef.current) mapRef.current.removeLayer(markerRef.current);
-      markerRef.current = L.marker([center.lat, center.lng]).addTo(mapRef.current);
-    }
-  }, [center]);
+    const map = mapRef.current;
+    if (!map) return;
 
-  useEffect(() => {
-    if (mapRef.current && polygon) {
-      if (polygonLayerRef.current) mapRef.current.removeLayer(polygonLayerRef.current);
-      
-      polygonLayerRef.current = L.polygon(polygon, {
-        color: title.includes('Source') ? 'blue' : 'red',
-        fillColor: title.includes('Source') ? '#3b82f6' : '#ef4444',
-        fillOpacity: 0.5
-      }).addTo(mapRef.current);
-      
-      const bounds = polygonLayerRef.current.getBounds();
-      mapRef.current.fitBounds(bounds, { padding: [20, 20] });
+    if (markerRef.current) map.removeLayer(markerRef.current);
+    if (typeof center?.lat === 'number' && typeof center?.lng === 'number') {
+      markerRef.current = L.marker([center.lat, center.lng]).addTo(map);
     }
-  }, [polygon]);
+
+    if (polygonLayerRef.current) {
+      map.removeLayer(polygonLayerRef.current);
+      polygonLayerRef.current = null;
+    }
+
+    const isValidPolygon = (p: any): boolean => {
+      return Array.isArray(p) && p.length > 0 && Array.isArray(p[0]);
+    };
+
+    if (isValidPolygon(polygon)) {
+      try {
+        polygonLayerRef.current = L.polygon(polygon, {
+          color: title.toLowerCase().includes('source') ? '#2563eb' : '#dc2626',
+          fillColor: title.toLowerCase().includes('source') ? '#3b82f6' : '#ef4444',
+          fillOpacity: 0.25,
+          weight: 2
+        }).addTo(map);
+        
+        const bounds = polygonLayerRef.current.getBounds();
+        if (bounds && bounds.isValid() && !isMouseDownRef.current) {
+          map.fitBounds(bounds, { padding: [80, 80], maxZoom: 12 });
+        }
+      } catch (err) {
+        console.warn("Polygon draw error:", err);
+      }
+    } else if (typeof center?.lat === 'number' && typeof center?.lng === 'number') {
+      const currentBounds = map.getBounds();
+      if (currentBounds.isValid() && !currentBounds.contains([center.lat, center.lng])) {
+        map.panTo([center.lat, center.lng], { animate: true });
+      }
+    }
+  }, [center, polygon, title]);
 
   return (
-    <div className="flex flex-col h-full bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
-      <div className="px-4 py-2 bg-slate-100 border-b border-slate-200 font-semibold text-slate-700 flex justify-between items-center">
-        <span>{title}</span>
-        <span className="text-xs font-normal opacity-60">
-          {center.lat.toFixed(4)}, {center.lng.toFixed(4)}
-        </span>
+    <div className="relative w-full h-full flex flex-col bg-white overflow-hidden">
+      {/* Absolute Overlay UI */}
+      <div className="absolute top-4 left-4 right-4 z-[1000] flex justify-between items-start pointer-events-none">
+        <div className="flex flex-col gap-1.5 pointer-events-auto">
+          <div className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-xl border flex items-center gap-2 ${
+            isSelectMode ? 'bg-amber-500 text-white border-amber-600 scale-105' : 'bg-white/95 backdrop-blur-md text-slate-800 border-slate-200'
+          }`}>
+            {isSelectMode && <div className="w-2 h-2 bg-white rounded-full animate-pulse" />}
+            {title}
+          </div>
+          <div className="bg-slate-900/80 backdrop-blur-md text-white px-3 py-1.5 rounded-xl text-[9px] font-mono shadow-lg w-fit">
+            {typeof center?.lat === 'number' ? center.lat.toFixed(5) : '0'}, {typeof center?.lng === 'number' ? center.lng.toFixed(5) : '0'}
+          </div>
+        </div>
       </div>
-      <div id={id} ref={containerRef} className="flex-grow z-0" />
+
+      {/* Map Body: Use pure absolute positioning to avoid flex container quirks */}
+      <div 
+        ref={containerRef} 
+        className={`absolute inset-0 z-0 ${isSelectMode ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`}
+      />
     </div>
   );
 };
