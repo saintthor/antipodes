@@ -13,14 +13,19 @@
             height: 100%;
             z-index: 1;
         }
-        @keyframes mole-dig {
-            0% { transform: translateY(0) scale(1); opacity: 1; }
-            40% { transform: translateY(300px) scale(0); opacity: 0; }
-            60% { transform: translateY(-300px) scale(0); opacity: 0; }
-            100% { transform: translateY(0) scale(1); opacity: 1; }
+        @keyframes mole-dig-down {
+            0% { transform: scale(1); opacity: 1; filter: blur(0px); }
+            100% { transform: scale(0); opacity: 0; filter: blur(10px); }
         }
-        .mole-animating {
-            animation: mole-dig 3s ease-in-out forwards;
+        @keyframes mole-dig-up {
+            0% { transform: scale(0); opacity: 0; filter: blur(10px); }
+            100% { transform: scale(1); opacity: 1; filter: blur(0px); }
+        }
+        .mole-down {
+            animation: mole-dig-down 1.5s cubic-bezier(0.55, 0.055, 0.675, 0.19) forwards;
+        }
+        .mole-up {
+            animation: mole-dig-up 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) forwards;
         }
         html, body {
             margin: 0;

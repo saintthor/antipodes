@@ -10,12 +10,13 @@ interface MoleAnimationProps {
 const MoleAnimation: React.FC<MoleAnimationProps> = ({ isAnimating, onFinish, direction }) => {
   React.useEffect(() => {
     if (isAnimating) {
+      // Each phase (down into earth, up from earth) takes half of the total time (1.5s each)
       const timer = setTimeout(() => {
         onFinish();
-      }, 3000);
+      }, 1500);
       return () => clearTimeout(timer);
     }
-  }, [isAnimating, onFinish]);
+  }, [isAnimating, onFinish, direction]);
 
   if (!isAnimating) return null;
 
@@ -23,13 +24,13 @@ const MoleAnimation: React.FC<MoleAnimationProps> = ({ isAnimating, onFinish, di
     <div className="fixed inset-0 z-[9999] flex items-center justify-center pointer-events-none">
       <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
         {/* Transparent dirt overlay effect */}
-        <div className={`absolute inset-0 bg-amber-950/20 backdrop-blur-sm transition-opacity duration-700 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}>
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_transparent_0%,_rgba(69,26,3,0.4)_100%)]"></div>
+        <div className={`absolute inset-0 bg-amber-950/40 backdrop-blur-sm transition-opacity duration-700 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}>
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_transparent_0%,_rgba(69,26,3,0.6)_100%)]"></div>
           {/* Subtle dirt particles */}
           <div className="absolute inset-0 opacity-20 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')]"></div>
         </div>
         
-        <div className="mole-animating flex flex-col items-center">
+        <div className={`${direction === 'down' ? 'mole-down' : 'mole-up'} flex flex-col items-center`}>
             {/* Cuter SVG Mole */}
             <svg width="180" height="180" viewBox="0 0 100 100" className="drop-shadow-[0_25px_40px_rgba(0,0,0,0.4)]">
                 {/* Main Body */}
@@ -65,7 +66,7 @@ const MoleAnimation: React.FC<MoleAnimationProps> = ({ isAnimating, onFinish, di
             
             <div className="mt-8 px-8 py-3 bg-white/90 backdrop-blur-md rounded-2xl shadow-2xl border border-amber-200 font-bold text-amber-900 text-sm tracking-tight flex items-center gap-3">
                 <span className="text-xl">🛠️</span>
-                {direction === 'down' ? 'Going deep underground...' : 'Popping up on the other side!'}
+                {direction === 'down' ? 'Digging down into the map...' : 'Popping up on the other side!'}
             </div>
         </div>
       </div>
