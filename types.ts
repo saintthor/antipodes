@@ -13,7 +13,13 @@ export interface GeoRegion {
 
 export interface NominatimResult {
   display_name: string;
+  /** The OSM ID of the object */
+  osm_id: string | number;
+  /** The OSM type of the object (node, way, relation) */
+  osm_type: string;
   type: string;
+  lat?: string;
+  lon?: string;
   address: {
     [key: string]: string | undefined;
     neighbourhood?: string;
