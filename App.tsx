@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import MapPanel from './components/MapPanel';
 import MoleAnimation from './components/MoleAnimation';
 import { Coordinate } from './types';
@@ -40,7 +40,12 @@ const App: React.FC = () => {
   const [isRectangleMode, setIsRectangleMode] = useState(false);
 
   const lastRequestTime = useRef<number>(0);
+  const skipNextClick = useRef<boolean>(false);
 
+  /**
+   * Helper to convert GeoJSON coordinates to Leaflet-compatible [lat, lng] format.
+   * Also includes sampling for very large polygons to improve performance.
+   */
   const convertGeoJsonToLeaflet = (coords: any): any => {
     if (!coords) return null;
     if (Array.isArray(coords) && coords.length === 2 && typeof coords[0] === 'number') {
@@ -63,6 +68,9 @@ const App: React.FC = () => {
     return null;
   };
 
+  /**
+   * Updates the antipode center and polygon based on the current source location.
+   */
   const updateAntipodes = (sourcePoly: any) => {
     const newAntiCenter = calculateAntipode(sourceCenter);
     setAntiCenter(newAntiCenter);
@@ -73,8 +81,13 @@ const App: React.FC = () => {
     }
   };
 
+  // Sync antipode state whenever the source changes
+  useEffect(() => {
+    updateAntipodes(sourcePolygon);
+  }, [sourceCenter, sourcePolygon]);
+
   /**
-   * 强化版层级追踪：特别针对 USA 等大国做了优化，增加了防御性代码
+   * Fetches the administrative hierarchy for a given location to allow region-level navigation.
    */
   const traceHierarchyStructure = async (initialResult: any) => {
     if (!initialResult) return [];
@@ -83,7 +96,6 @@ const App: React.FC = () => {
       const items: HierarchyItem[] = [];
       const seenIds = new Set<string>();
 
-      // 1. 尝试从详情接口获取层级 (这是最准确的)
       if (initialResult.osm_id && initialResult.osm_type) {
         const details = await fetchDetails(initialResult.osm_type, String(initialResult.osm_id));
         if (details && details.address) {
@@ -108,11 +120,9 @@ const App: React.FC = () => {
         }
       }
 
-      // 2. 国家级补全 (针对 USA/United States 特别优化)
       const countryName = initialResult.address?.country;
       if (countryName && !items.some(i => i.name.toLowerCase().includes(countryName.toLowerCase()))) {
          const searchResults = await searchGeocode(countryName);
-         // 优先寻找：类型为 boundary 且为 relation 的结果
          const c = searchResults.find(r => 
             (r.osm_type === 'relation') && 
             (r.type === 'administrative' || (r as any).class === 'boundary')
@@ -132,7 +142,6 @@ const App: React.FC = () => {
          }
       }
 
-      // 3. 将自身添加进层级 (增加防御性检查防止 charAt 报错)
       if (initialResult.osm_id && initialResult.osm_type) {
           const selfIdKey = `${initialResult.osm_type.charAt(0).toUpperCase()}${initialResult.osm_id}`;
           if (!seenIds.has(selfIdKey)) {
@@ -153,6 +162,9 @@ const App: React.FC = () => {
     }
   };
 
+  /**
+   * Loads the boundary polygon for a specific administrative level.
+   */
   const loadLevelBoundary = async (item: HierarchyItem) => {
     if (item.loaded) {
         setActiveLevelId(item.idKey);
@@ -179,8 +191,15 @@ const App: React.FC = () => {
     }
   };
 
+  /**
+   * Handles map click events to select a new source location.
+   */
   const handleMapClick = useCallback(async (lat: number, lng: number) => {
-    if (isRectangleMode) return;
+    if (isRectangleMode || skipNextClick.current) {
+        skipNextClick.current = false;
+        return;
+    }
+
     const now = Date.now();
     if (now - lastRequestTime.current < 500) return;
     
@@ -193,7 +212,6 @@ const App: React.FC = () => {
     
     try {
       const res = await reverseGeocode(lat, lng);
-      // Nominatim reverse 可能返回 error 对象而非 null
       if (res && !res.error) {
         const structure = await traceHierarchyStructure(res);
         if (structure.length > 0) {
@@ -213,10 +231,16 @@ const App: React.FC = () => {
     }
   }, [isRectangleMode]);
 
+  /**
+   * Handles custom rectangle selection to define a specific area.
+   */
   const handleRectangleSelect = (bounds: any) => {
+    skipNextClick.current = true;
+
     const centerLat = (bounds._northEast.lat + bounds._southWest.lat) / 2;
     const centerLng = (bounds._northEast.lng + bounds._southWest.lng) / 2;
     setSourceCenter({ lat: centerLat, lng: centerLng });
+    
     const poly = [
       [bounds._northEast.lat, bounds._northEast.lng],
       [bounds._northEast.lat, bounds._southWest.lng],
@@ -227,28 +251,36 @@ const App: React.FC = () => {
     setSourcePolygon([poly]);
     setHierarchy([{ name: 'Custom Selection', osmId: '0', osmType: 'box', idKey: 'custom', loaded: true, geojson: { coordinates: [] } }]);
     setActiveLevelId('custom');
-    setIsRectangleMode(false);
+    
+    setTimeout(() => {
+        setIsRectangleMode(false);
+        setTimeout(() => { skipNextClick.current = false; }, 150);
+    }, 50);
   };
 
+  /**
+   * Handles location search functionality.
+   */
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchInput.trim()) return;
+
     setIsLoading(true);
     setError(null);
     try {
       const results = await searchGeocode(searchInput);
       if (results && results.length > 0) {
-        const res = results[0];
-        setSourceCenter({ lat: parseFloat(res.lat || '0'), lng: parseFloat(res.lon || '0') });
-        const structure = await traceHierarchyStructure(res);
+        const first = results[0];
+        setSourceCenter({ lat: parseFloat(first.lat!), lng: parseFloat(first.lon!) });
+        const structure = await traceHierarchyStructure(first);
         setHierarchy(structure);
         if (structure.length > 0) {
-            loadLevelBoundary(structure[0]);
-        } else if (res.geojson) {
-            setSourcePolygon(convertGeoJsonToLeaflet(res.geojson.coordinates));
+          loadLevelBoundary(structure[0]);
+        } else if (first.geojson) {
+          setSourcePolygon(convertGeoJsonToLeaflet(first.geojson.coordinates));
         }
       } else {
-        setError("No results for search.");
+        setError("Place not found.");
       }
     } catch (err) {
       setError("Search failed.");
@@ -257,133 +289,169 @@ const App: React.FC = () => {
     }
   };
 
-  const triggerDiscovery = () => {
+  /**
+   * Triggers the mole digging animation to switch views.
+   */
+  const triggerMoleTravel = () => {
     setIsAnimating(true);
     setAnimationStage('down');
-    setTimeout(() => {
+  };
+
+  /**
+   * Handles the conclusion of the mole animation stages.
+   */
+  const handleAnimationFinish = () => {
+    if (animationStage === 'down') {
+      setView(view === 'source' ? 'anti' : 'source');
       setAnimationStage('up');
-      updateAntipodes(sourcePolygon);
-      setView('anti');
-    }, 1500);
+    } else {
+      setIsAnimating(false);
+    }
   };
 
   return (
-    <div className="h-full w-full flex flex-col bg-slate-50 overflow-hidden font-sans">
-      <header className="flex-shrink-0 bg-white border-b border-slate-200 p-3 md:px-8 flex flex-col sm:flex-row justify-between items-center z-50 gap-4 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="bg-amber-600 text-white w-10 h-10 flex items-center justify-center rounded-2xl shadow-lg font-bold text-xl">🐾</div>
-          <div>
-            <h1 className="text-lg font-black text-slate-900 tracking-tight leading-none">Antipode Mole</h1>
-            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Defensive Boundary Logic</p>
-          </div>
-        </div>
-
-        <form onSubmit={handleSearch} className="flex-grow max-w-lg w-full flex gap-2">
-          <input 
-            type="text" 
-            placeholder="City, State or Country..." 
-            className="flex-grow px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-medium focus:ring-2 focus:ring-amber-500 focus:bg-white outline-none transition-all"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
-          <button type="submit" className="px-5 py-2.5 bg-slate-900 text-white rounded-2xl text-xs font-bold hover:bg-slate-800 transition-all shadow-md">Search</button>
-        </form>
-        
-        <div className="flex gap-2">
-           {view === 'anti' && (
-              <button onClick={() => setView('source')} className="px-4 py-2 bg-amber-50 text-amber-700 font-bold rounded-2xl text-[10px] border border-amber-200 shadow-sm active:scale-95">
-                ← Back
-              </button>
-           )}
-        </div>
-      </header>
-
-      {view === 'source' && (
-        <>
-          <section className="flex-shrink-0 bg-white border-b border-slate-100 px-4 md:px-8 py-2.5 flex flex-col md:flex-row md:items-center gap-4 overflow-hidden z-40">
-              <div className="flex items-center gap-4 shrink-0">
-                <div className="flex flex-col">
-                  <span className="text-[10px] font-black text-amber-600 uppercase tracking-tighter">Tools</span>
-                  <button 
-                    onClick={() => setIsRectangleMode(!isRectangleMode)}
-                    className={`mt-1 px-4 py-1.5 rounded-xl text-[10px] font-black transition-all border ${isRectangleMode ? 'bg-amber-600 text-white border-amber-600' : 'bg-slate-50 text-slate-600 border-slate-200 shadow-sm hover:border-amber-400'}`}
-                  >
-                    {isRectangleMode ? 'CANCEL' : 'DRAW BOX'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex flex-col flex-grow overflow-hidden">
-                <div className="flex justify-between items-end pr-4">
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Geography Levels</span>
-                    {isLevelLoading && <span className="text-[10px] text-amber-600 font-bold animate-pulse">Simplifying Large Boundary...</span>}
-                </div>
-                <div className="flex flex-row gap-2 overflow-x-auto whitespace-nowrap scrollbar-hide items-center py-2 min-h-[48px]">
-                {isLoading ? (
-                    <div className="text-amber-500 font-bold text-[11px] animate-pulse">Analyzing territory...</div>
-                ) : error ? (
-                    <div className="text-red-500 text-[11px] font-bold">{error}</div>
-                ) : hierarchy.length > 0 ? (
-                    hierarchy.map((level) => (
-                    <button 
-                        key={level.idKey}
-                        disabled={isLevelLoading}
-                        className={`px-4 py-1.5 border rounded-xl text-[11px] font-bold transition-all shadow-sm ${activeLevelId === level.idKey ? 'bg-amber-600 text-white border-amber-600 scale-105' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-white disabled:opacity-50'}`}
-                        onClick={() => loadLevelBoundary(level)}
-                    >
-                      {level.name}
-                    </button>
-                  ))
-                ) : (
-                  <div className="text-slate-400 text-[11px] italic">Trace hierarchy by clicking map</div>
-                )}
-                </div>
-              </div>
-          </section>
-
-          <div className="flex-shrink-0 bg-white border-b border-slate-200 z-30 px-4 md:px-8 py-3">
-            <button 
-              onClick={triggerDiscovery}
-              disabled={isLoading || isLevelLoading || (!sourcePolygon && !sourceCenter)}
-              className="w-full py-4 bg-amber-600 hover:bg-amber-700 text-white font-black transition-all disabled:opacity-40 disabled:bg-slate-200 text-[14px] tracking-[0.2em] active:scale-[0.98] flex items-center justify-center gap-3 rounded-2xl shadow-xl uppercase"
-            >
-              <span>🕳️</span> DIG TO THE OTHER SIDE <span>🕳️</span>
-            </button>
-          </div>
-        </>
-      )}
-
-      <main className="flex-grow relative bg-white overflow-hidden">
-        {view === 'source' ? (
-          <MapPanel 
-            key="source-map"
-            id="source-map" 
-            title="SOURCE REGION" 
-            center={sourceCenter} 
-            polygon={sourcePolygon}
-            onMapClick={handleMapClick}
-            isSelectMode={isRectangleMode}
-            onRectangleSelect={handleRectangleSelect}
-          />
-        ) : (
-          <MapPanel 
-            key="anti-map"
-            id="anti-map" 
-            title="ANTIPODE REGION" 
-            center={antiCenter} 
-            polygon={antiPolygon}
-            isSelectMode={false}
-          />
-        )}
-      </main>
-
+    <div className="flex h-screen w-full bg-slate-50 font-sans text-slate-900 overflow-hidden relative">
       <MoleAnimation 
         isAnimating={isAnimating} 
-        onFinish={() => setIsAnimating(false)} 
-        direction={animationStage}
+        onFinish={handleAnimationFinish} 
+        direction={animationStage} 
       />
+
+      {/* Sidebar UI */}
+      <div className="w-80 h-full bg-white border-r border-slate-200 flex flex-col shadow-2xl z-10">
+        <div className="p-6 border-b border-slate-100 bg-slate-50/50">
+          <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+            <span className="text-3xl">🕳️</span> ANTi-MOLE
+          </h1>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+            Global Antipode Explorer
+          </p>
+        </div>
+
+        <div className="p-4 flex-grow overflow-y-auto space-y-6">
+          <form onSubmit={handleSearch} className="relative">
+            <input
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search a place..."
+              className="w-full pl-10 pr-4 py-3 bg-slate-100 border-none rounded-2xl text-sm focus:ring-2 focus:ring-amber-500 transition-all outline-none"
+            />
+            <span className="absolute left-3.5 top-3.5 text-slate-400">🔍</span>
+          </form>
+
+          <div className="flex gap-2">
+            <button
+              onClick={() => setIsRectangleMode(!isRectangleMode)}
+              className={`flex-1 py-3 px-2 rounded-2xl text-[10px] font-black uppercase tracking-wider transition-all border ${
+                isRectangleMode 
+                ? 'bg-amber-100 border-amber-300 text-amber-700 ring-2 ring-amber-500/20' 
+                : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+              }`}
+            >
+              {isRectangleMode ? '⏹️ Stop Selection' : '⬛ Draw Box'}
+            </button>
+            <button
+              onClick={triggerMoleTravel}
+              disabled={isAnimating}
+              className="flex-1 py-3 px-2 rounded-2xl bg-slate-900 text-white text-[10px] font-black uppercase tracking-wider hover:bg-slate-800 transition-all active:scale-95 disabled:opacity-50"
+            >
+              🚀 Dig {view === 'source' ? 'Antipode' : 'Back'}
+            </button>
+          </div>
+
+          {error && (
+            <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-xs text-red-600 font-medium">
+              {error}
+            </div>
+          )}
+
+          {isLoading && (
+            <div className="flex items-center justify-center py-4 gap-2 text-slate-400 text-xs font-medium italic">
+              <div className="w-4 h-4 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin"></div>
+              Looking deep...
+            </div>
+          )}
+
+          {hierarchy.length > 0 && (
+            <div className="space-y-3">
+              <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Region Levels</h3>
+              <div className="space-y-1">
+                {hierarchy.map((item) => (
+                  <button
+                    key={item.idKey}
+                    onClick={() => loadLevelBoundary(item)}
+                    disabled={isLevelLoading}
+                    className={`w-full text-left px-4 py-3 rounded-xl text-sm transition-all border ${
+                      activeLevelId === item.idKey
+                        ? 'bg-slate-900 border-slate-900 text-white shadow-lg'
+                        : 'bg-white border-slate-100 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                    } flex items-center justify-between group`}
+                  >
+                    <span className="truncate pr-2 font-medium">{item.name}</span>
+                    {activeLevelId === item.idKey && isLevelLoading && (
+                      <div className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin"></div>
+                    )}
+                    {activeLevelId === item.idKey && !isLevelLoading && (
+                      <span className="text-xs">📍</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 bg-slate-50 border-t border-slate-100">
+           <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase mb-2">
+             <span>Current View</span>
+             <span className={view === 'source' ? 'text-amber-600' : 'text-blue-600'}>
+               {view === 'source' ? 'Surface' : 'The Other Side'}
+             </span>
+           </div>
+           <div className="flex bg-slate-200 p-1 rounded-xl">
+             <button 
+                onClick={() => setView('source')}
+                className={`flex-1 py-1.5 rounded-lg text-[10px] font-black transition-all ${view === 'source' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+             >
+               SOURCE
+             </button>
+             <button 
+                onClick={() => setView('anti')}
+                className={`flex-1 py-1.5 rounded-lg text-[10px] font-black transition-all ${view === 'anti' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+             >
+               ANTIPODE
+             </button>
+           </div>
+        </div>
+      </div>
+
+      {/* Map Content Viewports */}
+      <div className="flex-grow relative bg-slate-200">
+        <div className="absolute inset-0 transition-opacity duration-500" style={{ opacity: view === 'source' ? 1 : 0, pointerEvents: view === 'source' ? 'auto' : 'none' }}>
+            <MapPanel 
+              id="source-map"
+              title="Source Location"
+              center={sourceCenter}
+              polygon={sourcePolygon}
+              onMapClick={handleMapClick}
+              isSelectMode={isRectangleMode}
+              onRectangleSelect={handleRectangleSelect}
+            />
+        </div>
+        <div className="absolute inset-0 transition-opacity duration-500" style={{ opacity: view === 'anti' ? 1 : 0, pointerEvents: view === 'anti' ? 'auto' : 'none' }}>
+            <MapPanel 
+              id="anti-map"
+              title="Antipode Location"
+              center={antiCenter}
+              polygon={antiPolygon}
+              isSelectMode={false}
+            />
+        </div>
+      </div>
     </div>
   );
 };
 
+// Fixed the missing default export to resolve the module error in index.tsx
 export default App;
